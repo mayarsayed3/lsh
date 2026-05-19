@@ -1,15 +1,3 @@
-/***************************************************************************//**
-
-  @file         main.c
-
-  @author       Stephen Brennan
-
-  @date         Thursday,  8 January 2015
-
-  @brief        LSH (Libstephen SHell)
-
-*******************************************************************************/
-
 #include <sys/wait.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -23,6 +11,11 @@
 int lsh_cd(char **args);
 int lsh_help(char **args);
 int lsh_exit(char **args);
+int lsh_pwd(char **args);
+int lsh_echo(char **args);
+int lsh_history(char **args);
+int lsh_env(char **args);
+
 
 /*
   List of builtin commands, followed by their corresponding functions.
@@ -30,17 +23,27 @@ int lsh_exit(char **args);
 char *builtin_str[] = {
   "cd",
   "help",
-  "exit"
+  "exit",
+  "pwd",
+  "echo",
+  "history",
+  "env"
 };
 
 int (*builtin_func[]) (char **) = {
+  // function pointers to the builtin functions related to the builtin_str array (same index)
   &lsh_cd,
   &lsh_help,
-  &lsh_exit
+  &lsh_exit,
+  &lsh_pwd,
+  &lsh_echo,
+  &lsh_history,
+  &lsh_env
 };
 
 int lsh_num_builtins() {
   return sizeof(builtin_str) / sizeof(char *);
+  // returns the number of builtin commands by dividing the total size of the builtin_str array by the size of a single char* (8-bit)
 }
 
 /*
@@ -94,6 +97,63 @@ int lsh_exit(char **args)
   return 0;
 }
 
+int lsh_pwd(char **args)
+{
+  char cwd[1024];
+  if (getcwd(cwd, sizeof(cwd)) != NULL) {
+    printf("%s\n", cwd);
+  } else {
+    perror("lsh");
+  }
+  return 1;
+}
+ int lsh_echo(char **args)
+{
+  int i = 1; 
+  if (args[i] == NULL)
+  {
+    printf("\n");
+    return 1;
+  }
+  while (args[i] != NULL) {
+    printf("%s", args[i]);
+    if (args[i + 1] != NULL)
+       printf(" ");
+    i++;
+  }
+  printf("\n");
+  return 1;
+}
+
+char **history = NULL;
+int history_count = 0;
+int history_capacity = 100;
+
+int lsh_history(char **args)
+{
+  if (history_count == 0)
+  {
+    printf("history is empty\n");
+    return 1;
+  }
+  for (int i = 0; i < history_count; i++)
+  {
+    printf("%d %s\n", i + 1, history[i]);
+  }
+  return 1;
+}
+int lsh_env(char **args)
+{
+  extern char **environ;
+  // array : key = value pairs of environment variables, terminated by a NULL pointer
+    int i = 0;
+    while (environ[i] != NULL)
+    {
+        printf("%s\n", environ[i]);
+        i++;
+    }
+  return 1;
+}
 /**
   @brief Launch a program and wait for it to terminate.
   @param args Null terminated list of arguments (including program).
@@ -105,6 +165,8 @@ int lsh_launch(char **args)
   int status;
 
   pid = fork();
+  // fork returns PID of the child to the parent, and 0 to the child
+  // fork returns negative if failed
   if (pid == 0) {
     // Child process
     if (execvp(args[0], args) == -1) {
@@ -119,6 +181,8 @@ int lsh_launch(char **args)
     do {
       waitpid(pid, &status, WUNTRACED);
     } while (!WIFEXITED(status) && !WIFSIGNALED(status));
+    //  WIFEXITED returns true if the child process terminated normally
+    // WIFSIGNALED returns true if the child process was terminated by a signal
   }
 
   return 1;
@@ -137,7 +201,6 @@ int lsh_execute(char **args)
     // An empty command was entered.
     return 1;
   }
-
   for (i = 0; i < lsh_num_builtins(); i++) {
     if (strcmp(args[0], builtin_str[i]) == 0) {
       return (*builtin_func[i])(args);
@@ -256,9 +319,31 @@ void lsh_loop(void)
   do {
     printf("> ");
     line = lsh_read_line();
+    char *line_copy = strdup(line);
     args = lsh_split_line(line);
     status = lsh_execute(args);
 
+    if (history_count >= history_capacity)
+    {
+      if(history_capacity == 0)
+        history_capacity = 100;
+      else history_capacity *= 2;
+      char **temp = realloc(history, history_capacity * sizeof(char *));
+      if (!temp)
+      {
+        fprintf(stderr, "Memory allocation failed\n");
+        exit(EXIT_FAILURE);
+      }   
+      history = temp;
+    }
+   if (args[0] != NULL)
+    {
+      history[history_count] = line_copy;
+      history_count++;
+    }
+    else {
+      free(line_copy);
+    }
     free(line);
     free(args);
   } while (status);
@@ -275,7 +360,13 @@ int main(int argc, char **argv)
   // Load config files, if any.
 
   // Run command loop.
+  history = malloc(history_capacity * sizeof(char *));
   lsh_loop();
+  for (int i = 0; i < history_count; i++)
+  {
+    free(history[i]);
+  }
+  free(history);
 
   // Perform any shutdown/cleanup.
 
